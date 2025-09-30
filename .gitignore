@@ -1,0 +1,5 @@
+/db
+/restic-monitor
+
+.env*
+!.env.example
