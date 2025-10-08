@@ -1,15 +1,21 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"slices"
+	"sync"
+	"syscall"
 	"time"
 
+	"github.com/adhocore/gronx"
+	"github.com/adhocore/gronx/pkg/tasker"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -17,8 +23,9 @@ import (
 )
 
 type Target struct {
-	Id       string `json:"id"`
-	Schedule string `json:"schedule"`
+	Id            string `json:"id"`
+	MaxAge        int    `json:"maxAge"`
+	AlertSchedule string `json:"alertSchedule"`
 }
 type Config struct {
 	Targets []Target `json:"targets"`
@@ -26,6 +33,8 @@ type Config struct {
 
 var config Config
 var db *badger.DB
+
+var gron = gronx.New()
 
 func main() {
 	err := godotenv.Load()
@@ -50,41 +59,146 @@ func main() {
 	}
 	defer db.Close()
 
-	for _, target := range config.Targets {
-		var t time.Time
-		err = db.View(
-			func(tx *badger.Txn) error {
-				item, err := tx.Get([]byte(target.Id))
-				if err != nil {
-					return fmt.Errorf("getting value: %w", err)
-				}
-				return item.Value(func(val []byte) error {
-					if err := t.UnmarshalBinary(val); err != nil {
-						return err
+	// Create a context that cancels on interrupt signals
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Set up signal handling
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// WaitGroup to wait for both functions to finish
+	var wg sync.WaitGroup
+
+	// Start both long-running functions
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		runScheduler(ctx)
+	}()
+
+	go func() {
+		defer wg.Done()
+		runServer(ctx)
+	}()
+
+	go func() {
+		<-sigChan
+		fmt.Println("\nreceived interrupt signal, shutting down...")
+		cancel()
+	}()
+
+	wg.Wait()
+	fmt.Println("all functions completed, exiting")
+}
+
+func runScheduler(ctx context.Context) {
+	t := tasker.New(tasker.Option{Verbose: true})
+
+	// taskr.Task("@hourly", func(ctx context.Context) (int, error) {
+	t.Task("* * * * *", func(ctx context.Context) (int, error) {
+		log.Println("Running alert task")
+
+		for _, target := range config.Targets {
+			var lastActing time.Time
+			err := db.View(
+				func(tx *badger.Txn) error {
+					item, err := tx.Get([]byte(target.Id))
+					if err != nil {
+						return fmt.Errorf("Getting value: %w", err)
 					}
-					return nil
+					return item.Value(func(val []byte) error {
+						if err := lastActing.UnmarshalBinary(val); err != nil {
+							return err
+						}
+						return nil
+					})
 				})
-			})
 
-		if err != nil {
-			log.Printf("target %s, not acted upon\n", target.Id)
-			continue
+			if err != nil {
+				log.Printf("Target %s, not acted upon\n", target.Id)
+				continue
+			}
+			log.Printf("target %s, last acted upon %s, max age %d, alert schedule %s\n", target.Id, lastActing.Format(time.RFC3339), target.MaxAge, target.AlertSchedule)
+
+			now := time.Now()
+			diff := now.Sub(lastActing)
+			if diff.Seconds() > float64(target.MaxAge) {
+				log.Printf("ALERT SHOULD BE SENT NOW!!1 (%f, %d)\n", diff.Seconds(), target.MaxAge)
+			}
+
+			due, err := gron.IsDue(target.AlertSchedule)
+			if err != nil {
+				log.Panic(err)
+			}
+			if due {
+				log.Printf("NOTIFICATION IS DUE!!!\n")
+			} else {
+				log.Println("NOTIFICATION IS NOT DUE")
+			}
 		}
-		log.Printf("target %s, last acted upon %s\n", target.Id, t.Format(time.RFC3339))
-	}
 
+		// then return exit code and error, for eg: if everything okay
+		return 0, nil
+	})
+
+	// Run the scheduler in a goroutine
+	schedulerDone := make(chan struct{})
+	go func() {
+		t.Run()
+		close(schedulerDone)
+	}()
+
+	// Wait for context cancellation
+	<-ctx.Done()
+	fmt.Println("Stopping task scheduler...")
+	t.Stop()
+
+	// Wait for scheduler to fully stop
+	<-schedulerDone
+	fmt.Println("Task scheduler stopped")
+}
+
+func runServer(ctx context.Context) {
 	r := chi.NewRouter()
+
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-
 	r.Use(WithToken)
 
 	r.Post("/{id}", TargetActed)
-	err = http.ListenAndServe(fmt.Sprintf(":%s", os.Getenv("PORT")), r)
-	if err != nil {
-		log.Fatal(err)
+
+	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("OK"))
+	})
+
+	srv := &http.Server{
+		Addr:    fmt.Sprintf(":%s", os.Getenv("PORT")),
+		Handler: r,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		fmt.Printf("Web server listening on :%s\n", os.Getenv("PORT"))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			fmt.Printf("Server error: %v\n", err)
+		}
+	}()
+
+	// Wait for context cancellation
+	<-ctx.Done()
+	fmt.Println("Stopping web server...")
+
+	// Graceful shutdown with timeout
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		fmt.Printf("Server shutdown error: %v\n", err)
+	} else {
+		fmt.Println("Web server stopped gracefully")
 	}
 }
 

@@ -1,8 +1,9 @@
-module github.com/snvfk1n/restic-monitor
+module github.com/snvfk1n/sifa
 
 go 1.25.1
 
 require (
+	github.com/adhocore/gronx v1.19.6 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dgraph-io/badger/v4 v4.8.0 // indirect
 	github.com/dgraph-io/ristretto/v2 v2.2.0 // indirect

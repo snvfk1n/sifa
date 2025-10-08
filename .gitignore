@@ -1,5 +1,6 @@
 /db
-/restic-monitor
+/sifa
 
 .env*
 !.env.example
+
