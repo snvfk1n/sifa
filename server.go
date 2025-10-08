@@ -116,7 +116,7 @@ func runScheduler(ctx context.Context) {
 				})
 
 			if err != nil {
-				log.Printf("Target %s, not acted upon\n", target.Id)
+				log.Printf("Target %s, not acted upon yet\n", target.Id)
 				continue
 			}
 			log.Printf("target %s, last acted upon %s, max age %d, alert schedule %s\n", target.Id, lastActing.Format(time.RFC3339), target.MaxAge, target.AlertSchedule)
@@ -124,7 +124,19 @@ func runScheduler(ctx context.Context) {
 			now := time.Now()
 			diff := now.Sub(lastActing)
 			if diff.Seconds() > float64(target.MaxAge) {
-				log.Printf("ALERT SHOULD BE SENT NOW!!1 (%f, %d)\n", diff.Seconds(), target.MaxAge)
+
+				email := PostmarkEmail{
+					From:          "noreply@lyncis",
+					To:            "339756@posteo.net",
+					Subject:       "Hello from Sifa",
+					TextBody:      "This is the plain text version of the email.",
+					HtmlBody:      "<strong>This is the HTML version</strong> of the email.",
+					MessageStream: "outbound", // Optional: defaults to "outbound"
+				}
+
+				if err := sendPostmarkEmail(os.Getenv("POSTMARK_TOKEN"), email); err != nil {
+					log.Println("Mail sent.")
+				}
 			}
 
 			due, err := gron.IsDue(target.AlertSchedule)
@@ -132,9 +144,7 @@ func runScheduler(ctx context.Context) {
 				log.Panic(err)
 			}
 			if due {
-				log.Printf("NOTIFICATION IS DUE!!!\n")
-			} else {
-				log.Println("NOTIFICATION IS NOT DUE")
+				log.Printf("Notification should be due\n")
 			}
 		}
 
@@ -235,15 +245,3 @@ func WithToken(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-
-// /POST webhook/:id (x-secret: <abc>)
-// if id doesn't exist, reply with 404
-// db.put(id, timestamp), reply with 200
-//
-// also, some kind of daily (?) cron job that checks the latest target call
-// could use cron syntax https://github.com/adhocore/gronx
-// if target is due
-//   send email via postmark (https://postmarkapp.com/developer/api/email-api):
-//
-//   Hello, the target "$TARGET_NAME" hasn't been called in the required amount of time. Please check your systems! Last call was: $TARGET_LAST_CALL.
-//
