@@ -14,8 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/adhocore/gronx"
-	"github.com/adhocore/gronx/pkg/tasker"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -35,12 +33,10 @@ type Config struct {
 var config Config
 var db *badger.DB
 
-var gron = gronx.New()
-
 func main() {
 	err := godotenv.Load()
 	if err != nil {
-		log.Fatal("Error loading .env file")
+		log.Fatal("error loading .env file")
 	}
 
 	jsonFile, err := os.Open("config.json")
@@ -52,7 +48,7 @@ func main() {
 	byteValue, _ := io.ReadAll(jsonFile)
 	json.Unmarshal(byteValue, &config)
 
-	fmt.Printf("Found %d targets\n", len(config.Targets))
+	fmt.Printf("found %d targets\n", len(config.Targets))
 
 	db, err = badger.Open(badger.DefaultOptions("./db"))
 	if err != nil {
@@ -93,82 +89,6 @@ func main() {
 	fmt.Println("all functions completed, exiting")
 }
 
-func runScheduler(ctx context.Context) {
-	t := tasker.New(tasker.Option{Verbose: true})
-
-	// taskr.Task("@hourly", func(ctx context.Context) (int, error) {
-	t.Task("* * * * *", func(ctx context.Context) (int, error) {
-		log.Println("Running alert task")
-
-		for _, target := range config.Targets {
-			var lastActing time.Time
-			err := db.View(
-				func(tx *badger.Txn) error {
-					item, err := tx.Get([]byte(target.Id))
-					if err != nil {
-						return fmt.Errorf("Getting value: %w", err)
-					}
-					return item.Value(func(val []byte) error {
-						if err := lastActing.UnmarshalBinary(val); err != nil {
-							return err
-						}
-						return nil
-					})
-				})
-
-			if err != nil {
-				log.Printf("Target %s, not acted upon yet\n", target.Id)
-				continue
-			}
-			log.Printf("target %s, last acted upon %s, max age %d, alert schedule %s\n", target.Id, lastActing.Format(time.RFC3339), target.MaxAge, target.AlertSchedule)
-
-			now := time.Now()
-			diff := now.Sub(lastActing)
-			if diff.Seconds() > float64(target.MaxAge) {
-
-				email := Email{
-					To:      target.Email,
-					Subject: "Hello from Sifa",
-					Body:    "This is the plain text version of the email.",
-				}
-
-				if err := sendEmail(email); err != nil {
-					log.Printf("Failed to send email: %v\n", err)
-				} else {
-					log.Println("Mail sent.")
-				}
-			}
-
-			due, err := gron.IsDue(target.AlertSchedule)
-			if err != nil {
-				log.Panic(err)
-			}
-			if due {
-				log.Printf("Notification should be due\n")
-			}
-		}
-
-		// then return exit code and error, for eg: if everything okay
-		return 0, nil
-	})
-
-	// Run the scheduler in a goroutine
-	schedulerDone := make(chan struct{})
-	go func() {
-		t.Run()
-		close(schedulerDone)
-	}()
-
-	// Wait for context cancellation
-	<-ctx.Done()
-	fmt.Println("Stopping task scheduler...")
-	t.Stop()
-
-	// Wait for scheduler to fully stop
-	<-schedulerDone
-	fmt.Println("Task scheduler stopped")
-}
-
 func runServer(ctx context.Context) {
 	r := chi.NewRouter()
 
@@ -176,12 +96,17 @@ func runServer(ctx context.Context) {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(WithToken)
 
-	r.Post("/{id}", TargetActed)
-
+	// Public routes (no auth required)
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("OK"))
+	})
+	r.Get("/mute/{id}/{token}", MuteTarget)
+
+	// Protected routes (require auth token)
+	r.Group(func(r chi.Router) {
+		r.Use(WithToken)
+		r.Post("/{id}", ActTarget)
 	})
 
 	srv := &http.Server{
@@ -191,28 +116,28 @@ func runServer(ctx context.Context) {
 
 	// Start server in a goroutine
 	go func() {
-		fmt.Printf("Web server listening on :%s\n", os.Getenv("PORT"))
+		fmt.Printf("web server listening on :%s\n", os.Getenv("PORT"))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("Server error: %v\n", err)
+			fmt.Printf("server error: %v\n", err)
 		}
 	}()
 
 	// Wait for context cancellation
 	<-ctx.Done()
-	fmt.Println("Stopping web server...")
+	fmt.Println("stopping web server...")
 
 	// Graceful shutdown with timeout
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		fmt.Printf("Server shutdown error: %v\n", err)
+		fmt.Printf("server shutdown error: %v\n", err)
 	} else {
-		fmt.Println("Web server stopped gracefully")
+		fmt.Println("web server stopped gracefully")
 	}
 }
 
-func TargetActed(w http.ResponseWriter, r *http.Request) {
+func ActTarget(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	idx := slices.IndexFunc(config.Targets, func(t Target) bool { return t.Id == id })
 	if idx < 0 {
@@ -222,9 +147,26 @@ func TargetActed(w http.ResponseWriter, r *http.Request) {
 	target := config.Targets[idx]
 
 	err := db.Update(func(txn *badger.Txn) error {
+		// Update last acting timestamp
 		now, err := time.Now().MarshalBinary()
-		err = txn.Set([]byte(target.Id), now)
-		return err
+		if err != nil {
+			return err
+		}
+		if err = txn.Set([]byte(target.Id), now); err != nil {
+			return err
+		}
+
+		// Clear muted state (if exists)
+		if err = txn.Delete([]byte(target.Id + ":muted")); err != nil && err != badger.ErrKeyNotFound {
+			return err
+		}
+
+		// Clear alert state (if exists) - target is back to normal
+		if err = txn.Delete([]byte(target.Id + ":alert")); err != nil && err != badger.ErrKeyNotFound {
+			return err
+		}
+
+		return nil
 	})
 	if err != nil {
 		log.Print(err)
@@ -232,7 +174,43 @@ func TargetActed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("target %s acted, cleared muted and alert state\n", target.Id)
 	w.Write([]byte(http.StatusText(200)))
+}
+
+func MuteTarget(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	token := chi.URLParam(r, "token")
+
+	// Verify the token
+	if !verifyMuteToken(id, token) {
+		http.Error(w, "invalid token", 403)
+		return
+	}
+
+	// Check if target exists
+	idx := slices.IndexFunc(config.Targets, func(t Target) bool { return t.Id == id })
+	if idx < 0 {
+		http.Error(w, "target not found", 404)
+		return
+	}
+
+	// Set muted flag in database
+	err := db.Update(func(txn *badger.Txn) error {
+		return txn.Set([]byte(id+":muted"), []byte("1"))
+	})
+	if err != nil {
+		log.Printf("failed to mute target %s: %v\n", id, err)
+		http.Error(w, "failed to mute target", 500)
+		return
+	}
+
+	log.Printf("target %s has been muted\n", id)
+
+	// Return HTML success page
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(200)
+	fmt.Fprintf(w, "Alerting for target %s is now muted.", id)
 }
 
 func WithToken(next http.Handler) http.Handler {

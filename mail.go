@@ -10,7 +10,7 @@ import (
 type Email struct {
 	To      string
 	Subject string
-	Body    string
+	Message string
 }
 
 type SMTPConfig struct {
@@ -48,7 +48,7 @@ func sendEmail(email Email) error {
 		"To: %s\r\n"+
 		"Subject: %s\r\n"+
 		"\r\n"+
-		"%s", config.From, email.To, email.Subject, email.Body)
+		"%s", config.From, email.To, email.Subject, email.Message)
 
 	// Set up authentication
 	auth := smtp.PlainAuth("", config.Username, config.Password, config.Host)
@@ -60,6 +60,6 @@ func sendEmail(email Email) error {
 		return fmt.Errorf("failed to send email: %w", err)
 	}
 
-	fmt.Printf("Email sent successfully to %s\n", email.To)
+	fmt.Printf("email sent successfully to %s\n", email.To)
 	return nil
 }
