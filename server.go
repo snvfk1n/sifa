@@ -26,6 +26,7 @@ type Target struct {
 	Id            string `json:"id"`
 	MaxAge        int    `json:"maxAge"`
 	AlertSchedule string `json:"alertSchedule"`
+	Email         string `json:"email"`
 }
 type Config struct {
 	Targets []Target `json:"targets"`
@@ -125,16 +126,15 @@ func runScheduler(ctx context.Context) {
 			diff := now.Sub(lastActing)
 			if diff.Seconds() > float64(target.MaxAge) {
 
-				email := PostmarkEmail{
-					From:          "noreply@lyncis",
-					To:            "339756@posteo.net",
-					Subject:       "Hello from Sifa",
-					TextBody:      "This is the plain text version of the email.",
-					HtmlBody:      "<strong>This is the HTML version</strong> of the email.",
-					MessageStream: "outbound", // Optional: defaults to "outbound"
+				email := Email{
+					To:      target.Email,
+					Subject: "Hello from Sifa",
+					Body:    "This is the plain text version of the email.",
 				}
 
-				if err := sendPostmarkEmail(os.Getenv("POSTMARK_TOKEN"), email); err != nil {
+				if err := sendEmail(email); err != nil {
+					log.Printf("Failed to send email: %v\n", err)
+				} else {
 					log.Println("Mail sent.")
 				}
 			}

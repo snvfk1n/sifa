@@ -1,68 +1,65 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"net/http"
+	"net/smtp"
+	"os"
+	"strconv"
 )
 
-type PostmarkEmail struct {
-	From          string `json:"From"`
-	To            string `json:"To"`
-	Subject       string `json:"Subject"`
-	TextBody      string `json:"TextBody,omitempty"`
-	HtmlBody      string `json:"HtmlBody,omitempty"`
-	MessageStream string `json:"MessageStream,omitempty"`
+type Email struct {
+	To      string
+	Subject string
+	Body    string
 }
 
-type PostmarkResponse struct {
-	To          string `json:"To"`
-	SubmittedAt string `json:"SubmittedAt"`
-	MessageID   string `json:"MessageID"`
-	ErrorCode   int    `json:"ErrorCode"`
-	Message     string `json:"Message"`
+type SMTPConfig struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	From     string
 }
 
-func sendPostmarkEmail(token string, email PostmarkEmail) error {
-	url := "https://api.postmarkapp.com/email"
-
-	// Marshal email to JSON
-	jsonData, err := json.Marshal(email)
+func loadSMTPConfig() (*SMTPConfig, error) {
+	portStr := os.Getenv("SMTP_PORT")
+	port, err := strconv.Atoi(portStr)
 	if err != nil {
-		return fmt.Errorf("failed to marshal email: %w", err)
+		return nil, fmt.Errorf("invalid SMTP_PORT: %w", err)
 	}
 
-	// Create HTTP request
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	return &SMTPConfig{
+		Host:     os.Getenv("SMTP_HOST"),
+		Port:     port,
+		Username: os.Getenv("SMTP_USERNAME"),
+		Password: os.Getenv("SMTP_PASSWORD"),
+		From:     os.Getenv("SMTP_FROM"),
+	}, nil
+}
+
+func sendEmail(email Email) error {
+	config, err := loadSMTPConfig()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return fmt.Errorf("failed to load SMTP config: %w", err)
 	}
 
-	// Set headers
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Postmark-Server-Token", token)
+	// Build plain-text email message
+	message := fmt.Sprintf("From: %s\r\n"+
+		"To: %s\r\n"+
+		"Subject: %s\r\n"+
+		"\r\n"+
+		"%s", config.From, email.To, email.Subject, email.Body)
 
-	// Send request
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	// Set up authentication
+	auth := smtp.PlainAuth("", config.Username, config.Password, config.Host)
+
+	// Send the email
+	addr := fmt.Sprintf("%s:%d", config.Host, config.Port)
+	err = smtp.SendMail(addr, auth, config.From, []string{email.To}, []byte(message))
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Parse response
-	var postmarkResp PostmarkResponse
-	if err := json.NewDecoder(resp.Body).Decode(&postmarkResp); err != nil {
-		return fmt.Errorf("failed to decode response: %w", err)
+		return fmt.Errorf("failed to send email: %w", err)
 	}
 
-	// Check for errors
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("postmark API error (code %d): %s", postmarkResp.ErrorCode, postmarkResp.Message)
-	}
-
-	fmt.Printf("Email sent successfully! MessageID: %s\n", postmarkResp.MessageID)
+	fmt.Printf("Email sent successfully to %s\n", email.To)
 	return nil
 }
