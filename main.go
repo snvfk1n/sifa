@@ -31,8 +31,8 @@ var db *badger.DB
 
 func main() {
 	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("error loading .env file")
+	if err != nil && !os.IsNotExist(err) {
+		log.Fatal("error loading .env file: ", err)
 	}
 
 	jsonFile, err := os.Open("config.json")
