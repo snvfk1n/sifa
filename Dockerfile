@@ -4,8 +4,13 @@ FROM golang:1.25-alpine AS builder
 # Set the working directory
 WORKDIR /app
 
+# Use Docker's automatic platform detection
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+
 # Ensure a portable, static-ish binary
-ENV CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+ENV CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v}
 
 # Copy and download dependencies
 COPY go.mod go.sum ./
