@@ -179,8 +179,7 @@ func runScheduler(ctx context.Context) {
 
 	t := tasker.New(tasker.Option{Verbose: true})
 
-	// t.Task("@hourly", checkTargets)
-	t.Task("* * * * *", checkTargets)
+	t.Task("@hourly", checkTargets)
 
 	// Run the scheduler in a goroutine
 	schedulerDone := make(chan struct{})
