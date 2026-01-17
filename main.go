@@ -35,6 +35,10 @@ func main() {
 		log.Fatal("error loading .env file: ", err)
 	}
 
+	if err := initAlerting(); err != nil {
+		log.Fatal("error loading shoutrrr: ", err)
+	}
+
 	jsonFile, err := os.Open("config.json")
 	if err != nil {
 		fmt.Println(err)

@@ -128,17 +128,14 @@ func checkTargets(ctx context.Context) (int, error) {
 				lastActedTime := now.Add(-diff)
 				formattedDuration := humanize.Time(lastActedTime)
 
-				email := Email{
-					To:      target.Email,
-					Subject: fmt.Sprintf("Alert: Target %s is overdue", target.Id),
-					Message: fmt.Sprintf("Target %s has not acted since %s.\n\nTo mute these alerts until the target acts again, click here:\n%s",
-						target.Id, formattedDuration, muteURL),
-				}
+				subject := fmt.Sprintf("Alert: Target %s is overdue", target.Id)
+				message := fmt.Sprintf("Target %s has not acted since %s.\n\nTo mute these alerts until the target acts again, click here:\n%s",
+					target.Id, formattedDuration, muteURL)
 
-				if err := sendEmail(email); err != nil {
-					log.Printf("failed to send email for target %s: %v\n", target.Id, err)
+				if err := sendAlert(subject, message); err != nil {
+					log.Printf("failed to send alert for target %s: %v\n", target.Id, err)
 				} else {
-					log.Printf("alert email sent for target %s\n", target.Id)
+					log.Printf("alert sent for target %s\n", target.Id)
 
 					// Store the alert timestamp in BadgerDB (persists across restarts)
 					if err := db.Update(func(txn *badger.Txn) error {
