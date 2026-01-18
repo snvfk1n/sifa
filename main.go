@@ -2,32 +2,20 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/joho/godotenv"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
-type Target struct {
-	Id            string `json:"id"`
-	MaxAge        int    `json:"maxAge"`
-	AlertSchedule string `json:"alertSchedule"`
-	Email         string `json:"email"`
-}
-
-type Config struct {
-	Targets []Target `json:"targets"`
-}
-
-var config Config
-var db *badger.DB
+var db *gorm.DB
 
 func main() {
 	err := godotenv.Load()
@@ -35,28 +23,34 @@ func main() {
 		log.Fatal("error loading .env file: ", err)
 	}
 
+	// Check if data is being piped via stdin
+	stat, _ := os.Stdin.Stat()
+	if (stat.Mode() & os.ModeCharDevice) == 0 {
+		// Data is being piped, run ingest mode
+		if err := runIngest(); err != nil {
+			log.Fatal("ingest failed: ", err)
+		}
+		return
+	}
+
 	if err := initAlerting(); err != nil {
 		log.Fatal("error loading shoutrrr: ", err)
 	}
 
-	jsonFile, err := os.Open("config.json")
+	db, err = gorm.Open(sqlite.Open("./sifa.db"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
 	if err != nil {
-		fmt.Println(err)
+		log.Fatal("failed to open database: ", err)
 	}
-	defer jsonFile.Close()
 
-	byteValue, _ := io.ReadAll(jsonFile)
-	json.Unmarshal(byteValue, &config)
-
-	fmt.Printf("found %d targets\n", len(config.Targets))
-
-	opts := badger.DefaultOptions("./db")
-	opts.Logger = nil
-	db, err = badger.Open(opts)
-	if err != nil {
-		log.Fatal(err)
+	if err := db.AutoMigrate(&Task{}); err != nil {
+		log.Fatal("failed to migrate database: ", err)
 	}
-	defer db.Close()
+
+	var count int64
+	db.Model(&Task{}).Count(&count)
+	fmt.Printf("found %d tasks\n", count)
 
 	// Create a context that cancels on interrupt signals
 	ctx, cancel := context.WithCancel(context.Background())

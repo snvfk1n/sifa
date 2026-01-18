@@ -8,7 +8,6 @@ import (
 	"github.com/containrrr/shoutrrr/pkg/types"
 )
 
-// url := "slack://token-a/token-b/token-c"
 var url string
 var sender *router.ServiceRouter
 

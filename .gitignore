@@ -1,7 +1,7 @@
-/db
+/*.db
 /sifa
 
 .env*
 !.env.example
 
-config.json
+tasks.json
