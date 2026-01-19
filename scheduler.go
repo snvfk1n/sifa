@@ -99,7 +99,7 @@ func checkTasks(ctx context.Context) (int, error) {
 
 					// Store the alert timestamp
 					now := time.Now()
-					if err := db.Model(&task).Updates(map[string]interface{}{
+					if err := db.Model(&task).Updates(map[string]any{
 						"last_alerted": now,
 						"alert":        true,
 					}).Error; err != nil {
@@ -112,7 +112,7 @@ func checkTasks(ctx context.Context) (int, error) {
 			if task.LastAlerted != nil {
 				log.Printf("task %s back to normal (acted %s ago), clearing alert state\n",
 					task.ID, diff.Round(time.Second))
-				if err := db.Model(&task).Updates(map[string]interface{}{
+				if err := db.Model(&task).Updates(map[string]any{
 					"last_alerted": nil,
 					"alert":        false,
 				}).Error; err != nil {
@@ -126,7 +126,6 @@ func checkTasks(ctx context.Context) (int, error) {
 }
 
 func runScheduler(ctx context.Context) {
-	// Run alert check immediately on startup
 	log.Println("running initial alert check on startup...")
 	if _, err := checkTasks(ctx); err != nil {
 		log.Printf("initial alert check failed: %v\n", err)
@@ -136,19 +135,16 @@ func runScheduler(ctx context.Context) {
 
 	t.Task("@hourly", checkTasks)
 
-	// Run the scheduler in a goroutine
 	schedulerDone := make(chan struct{})
 	go func() {
 		t.Run()
 		close(schedulerDone)
 	}()
 
-	// Wait for context cancellation
 	<-ctx.Done()
-	fmt.Println("Stopping task scheduler...")
+	fmt.Println("stopping task scheduler...")
 	t.Stop()
 
-	// Wait for scheduler to fully stop
 	<-schedulerDone
-	fmt.Println("Task scheduler stopped")
+	fmt.Println("task scheduler stopped")
 }
