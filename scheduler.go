@@ -88,7 +88,7 @@ func checkTasks(ctx context.Context) (int, error) {
 				lastActedTime := now.Add(-diff)
 				formattedDuration := humanize.Time(lastActedTime)
 
-				subject := fmt.Sprintf("Alert: Task %s is overdue", task.ID)
+				subject := fmt.Sprintf("Task %s is overdue", task.ID)
 				message := fmt.Sprintf("Task %s has not acted since %s.\n\nTo mute these alerts until the task acts again, click here:\n%s",
 					task.ID, formattedDuration, muteURL)
 

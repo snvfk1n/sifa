@@ -98,6 +98,7 @@ func ActTask(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(500), 500)
 		return
 	}
+	wasMuted := task.Muted
 
 	now := time.Now()
 	if err := db.Model(&task).Updates(map[string]any{
@@ -109,6 +110,12 @@ func ActTask(w http.ResponseWriter, r *http.Request) {
 		log.Printf("failed to update task %s: %v", id, err)
 		http.Error(w, http.StatusText(500), 500)
 		return
+	}
+
+	if wasMuted {
+		subject := fmt.Sprintf("Task %s acted", task.ID)
+		message := fmt.Sprintf("Task %s was due and muted, but now has been acted successfully.", task.ID)
+		sendAlert(subject, message)
 	}
 
 	log.Printf("task %s acted, cleared muted and alert state\n", id)
