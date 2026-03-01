@@ -37,7 +37,7 @@ func main() {
 		log.Fatal("error loading shoutrrr: ", err)
 	}
 
-	db, err = gorm.Open(sqlite.Open("./sifa.db"), &gorm.Config{
+	db, err = gorm.Open(sqlite.Open("./data/sifa.db"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {

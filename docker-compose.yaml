@@ -1,16 +1,12 @@
 services:
   sifa:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: sifa
+    image: ghcr.io/snvfk1n/sifa:latest
     ports:
       - "${PORT:-3010}:${PORT:-3010}"
     env_file:
       - .env
     volumes:
-      - ./config.json:/app/config.json:ro
-      - sifa-data:/app/db
+      - data:/app/data
     healthcheck:
       test:
         [
@@ -28,5 +24,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  sifa-data:
-    driver: local
+  data:

@@ -30,7 +30,7 @@ func runIngest() error {
 		return fmt.Errorf("failed to parse config JSON: %w", err)
 	}
 
-	db, err := gorm.Open(sqlite.Open("./sifa.db"), &gorm.Config{
+	db, err := gorm.Open(sqlite.Open("./data/sifa.db"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {
