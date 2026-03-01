@@ -46,7 +46,7 @@ RUN addgroup -S appuser \
 COPY --from=builder --chown=appuser:appuser /app/sifa /app/sifa
 
 # Create db directory with proper permissions
-RUN mkdir -p /app/db && chown -R appuser:appuser /app/db
+RUN mkdir -p /app/data && chown -R appuser:appuser /app/data
 
 # Run as non-root user
 USER appuser
