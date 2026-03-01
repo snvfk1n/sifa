@@ -5,3 +5,5 @@
 !.env.example
 
 tasks.json
+
+/.claude
