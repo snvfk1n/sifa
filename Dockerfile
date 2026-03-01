@@ -10,7 +10,14 @@ ARG TARGETARCH
 ARG TARGETVARIANT
 
 # Ensure a portable, static-ish binary
-ENV CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v}
+ENV CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOARM=${TARGETVARIANT#v}
+
+# <https://github.com/mattn/go-sqlite3/blob/master/_example/simple/Dockerfile>
+RUN apk add --no-cache \
+    # Important: required for go-sqlite3
+    gcc \
+    # Required for Alpine
+    musl-dev
 
 # Copy and download dependencies
 COPY go.mod go.sum ./
